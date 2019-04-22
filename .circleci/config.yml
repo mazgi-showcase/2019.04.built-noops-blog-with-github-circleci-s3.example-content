@@ -1,0 +1,79 @@
+defaults: &defaults
+  working_directory: ~/work
+  docker:
+    - image: mazgi/hugo-static-website:hugo-0.52-2018.11.1
+
+version: 2
+jobs:
+  deploy_to_production:
+    <<: *defaults
+    steps:
+      - run:
+          name: Export environment varibles from environment varibles
+          command: |
+            echo 'export AWS_ACCESS_KEY_ID=$PRODUCTION_AWS_ACCESS_KEY_ID' >> $BASH_ENV
+            echo 'export AWS_SECRET_ACCESS_KEY=$PRODUCTION_AWS_SECRET_ACCESS_KEY' >> $BASH_ENV
+            echo 'export S3_BUCKET_NAME=$PRODUCTION_S3_BUCKET_NAME' >> $BASH_ENV
+            echo 'export CLOUDFRONT_DISTRIBUTION_ID_0=$PRODUCTION_CLOUDFRONT_DISTRIBUTION_ID_0' >> $BASH_ENV
+            echo 'export CLOUDFRONT_DISTRIBUTION_ID_1=$PRODUCTION_CLOUDFRONT_DISTRIBUTION_ID_1' >> $BASH_ENV
+      - checkout
+      - run: git submodule update --init
+      - run:
+          name: Clear all old contents
+          command: rm -rf public/
+      - run:
+          name: Build Website
+          command: hugo
+      - run:
+          name: Deploy to S3
+          command: aws s3 sync --exact-timestamps public/ s3://${S3_BUCKET_NAME}/ --delete
+      - run:
+          name: Invalidate CloudFront cache (internal.example.com)
+          command: aws cloudfront create-invalidation --distribution-id ${CLOUDFRONT_DISTRIBUTION_ID_0} --paths '/*'
+      - run:
+          name: Invalidate CloudFront cache (internal.example.jp)
+          command: aws cloudfront create-invalidation --distribution-id ${CLOUDFRONT_DISTRIBUTION_ID_1} --paths '/*'
+
+  deploy_for_review:
+    <<: *defaults
+    steps:
+      - run:
+          name: Export environment varibles from environment varibles
+          command: |
+            echo 'export AWS_ACCESS_KEY_ID=$REVIEW_AWS_ACCESS_KEY_ID' >> $BASH_ENV
+            echo 'export AWS_SECRET_ACCESS_KEY=$REVIEW_AWS_SECRET_ACCESS_KEY' >> $BASH_ENV
+            echo 'export S3_BUCKET_NAME=$REVIEW_S3_BUCKET_NAME' >> $BASH_ENV
+            echo 'export CLOUDFRONT_DISTRIBUTION_ID_0=$REVIEW_CLOUDFRONT_DISTRIBUTION_ID_0' >> $BASH_ENV
+            echo 'export CLOUDFRONT_DISTRIBUTION_ID_1=$REVIEW_CLOUDFRONT_DISTRIBUTION_ID_1' >> $BASH_ENV
+      - checkout
+      - run: git submodule update --init
+      - run:
+          name: Clear all old contents
+          command: rm -rf public/
+      - run:
+          name: Build Website for review
+          command: bash -x scripts/build-for-review.sh
+      - run:
+          name: Deploy to S3
+          command: aws s3 sync --exact-timestamps public/ s3://${S3_BUCKET_NAME}/
+      - run:
+          name: Invalidate CloudFront cache (review.example.com)
+          command: aws cloudfront create-invalidation --distribution-id ${CLOUDFRONT_DISTRIBUTION_ID_0} --paths '/*'
+      - run:
+          name: Invalidate CloudFront cache (review.example.jp)
+          command: aws cloudfront create-invalidation --distribution-id ${CLOUDFRONT_DISTRIBUTION_ID_1} --paths '/*'
+
+workflows:
+  version: 2
+  production:
+    jobs:
+      - deploy_to_production:
+          filters:
+            branches:
+              only: master
+  review:
+    jobs:
+      - deploy_for_review:
+          filters:
+            branches:
+              ignore: master
